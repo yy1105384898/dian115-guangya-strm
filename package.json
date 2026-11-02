@@ -1,0 +1,9 @@
+{
+  "name": "dian115-guangya-strm",
+  "version": "0.6.3",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "pack": "node tools/build.mjs"
+  }
+}

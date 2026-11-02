@@ -1,0 +1,68 @@
+{
+  "schema_version": 3,
+  "id": "community.guangya-strm",
+  "name": "光鸭 STRM 同步",
+  "version": "0.6.3",
+  "author": "Community",
+  "description": "单账号登录、规则同步、元数据下载和经预览确认的孤立文件清理。",
+  "requires": {
+    "api": "3.8"
+  },
+  "ui": {
+    "entry": "ui/page.js"
+  },
+  "menu": {
+    "title": "光鸭 STRM",
+    "order": 80
+  },
+  "settings": [
+    {
+      "key": "page_size",
+      "label": "每页读取数量",
+      "type": "number",
+      "default": 100
+    }
+  ],
+  "jobs": [
+    {
+      "id": "sync",
+      "entry": "jobs/sync.js",
+      "handler": "run",
+      "timeout_seconds": 3600,
+      "allow_overlap": false,
+      "title": "同步光鸭 STRM"
+    },
+    {
+      "id": "scheduler",
+      "entry": "jobs/scheduler.js",
+      "handler": "run",
+      "timeout_seconds": 45,
+      "interval_seconds": 60,
+      "allow_overlap": false,
+      "queue": false,
+      "title": "光鸭整理及定时检查"
+    }
+  ],
+  "http": {
+    "entry": "jobs/http.js",
+    "handler": "handle",
+    "timeout_seconds": 60,
+    "public": true
+  },
+  "declared_usage": {
+    "apis": [
+      "光鸭 Web API：短信登录、Token 刷新、目录列表、下载与播放地址",
+      "DIAN-115 插件任务提交 API"
+    ],
+    "sites": [
+      "https://api.guangyapan.com",
+      "https://account.guangyapan.com"
+    ],
+    "files": [
+      "插件自有映射和下载缓存",
+      "用户配置的本地 STRM 和元数据输出目录",
+      "用户在清单中确认删除的本插件孤立输出文件"
+    ],
+    "risk": "保存用户主动提供的光鸭登录凭证；扫描选定目录并生成 STRM、按配置下载和覆盖元数据；播放回调用独立令牌鉴权并返回直链；清理仅在预览后由用户确认，且再次扫描网盘并校验文件哈希，只删除本插件记录的孤立输出文件。"
+  }
+}
