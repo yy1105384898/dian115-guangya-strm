@@ -13,7 +13,7 @@ export async function mount(root, ctx) {
   const app = node('section', 'gy'), style = node('style'); style.textContent = styles; app.append(style)
   const shell = node('div')
   shell.innerHTML = `
-    <header class="top"><div class="brand"><div class="logo" aria-hidden="true">▱</div><div><h2>光鸭 STRM <span class="version">v1.0.1</span></h2><small>网盘目录同步 · 文件清理</small></div></div><span class="badge" data-id="loginBadge">读取登录状态…</span></header>
+    <header class="top"><div class="brand"><div class="logo" aria-hidden="true">▱</div><div><h2>光鸭 STRM <span class="version">v1.0.3</span></h2><small>网盘目录同步 · 文件清理</small></div></div><span class="badge" data-id="loginBadge">读取登录状态…</span></header>
     <div class="tabs" role="tablist" aria-label="光鸭插件"><button data-tab="settings" role="tab" class="active" aria-selected="true"><svg viewBox="0 0 20 20" aria-hidden="true"><path d="M7 5h10M7 10h10M7 15h10M2 4l1 1 2-2M2 9l1 1 2-2M2 14l1 1 2-2"/></svg>STRM 同步</button><button data-tab="cleaner" role="tab" aria-selected="false"><svg viewBox="0 0 20 20" aria-hidden="true"><path d="M3 5h14M8 5V3h4v2M5 5l1 12h8l1-12M8 8v6M12 8v6"/></svg>文件清理</button><button data-tab="login" role="tab" aria-selected="false"><svg viewBox="0 0 20 20" aria-hidden="true"><circle cx="10" cy="6" r="3"/><path d="M4 17v-2a6 6 0 0 1 12 0v2"/></svg>账号登录</button></div>
     <section data-page="settings" role="tabpanel"><div class="toolbar"><span class="badge">源路径 · 输出目录 · 同步规则</span><div class="actions"><button class="primary" data-id="addRule">＋ 新增规则</button><button data-id="refresh">↻ 刷新</button></div></div>
     <div class="rule-stats"><div><small>全部</small><strong data-id="total">0</strong></div><div><small>启用</small><strong data-id="enabled">0</strong></div><div><small>已扫描</small><strong data-id="indexed">0</strong></div><div><small>生成 STRM</small><strong data-id="generated">0</strong></div></div>
@@ -167,14 +167,13 @@ export async function mount(root, ctx) {
   async function loadRuns() {
     const response = await ctx.api.get(`/api/extensions/v3/${ctx.id}/runs?limit=200`)
     if (disposed) return
-    const items = (Array.isArray(response) ? response : response?.items || []).filter(run => ['sync', 'cloud-cleanup'].includes(run.job_id))
+    const items = (Array.isArray(response) ? response : response?.items || []).filter(run => ['sync', 'cloud-cleanup', 'duplicate-source'].includes(run.job_id))
     monitorStatus = await ctx.storage.get('source_monitor_status') || {}
-    for (const rule of rules) libraryInfo[rule.id] = { mail: await ctx.storage.get('library_pending:' + rule.id), state: await ctx.storage.get('library_state:' + rule.id) }
     activeTask = items.some(run => ['queued','running','attention_required'].includes(run.status))
     for (const rule of rules) summaries[rule.id] = await ctx.storage.get('last_sync:' + rule.id) || (rule.id === 'legacy' ? await ctx.storage.get('last_sync') : null)
     if (disposed) return
     renderRules()
-    await syncLog.update(items, rules, libraryInfo)
+    await syncLog.update(items)
     if (pendingCleanupSince) {
       const preview = items.find(run => run.job_id === 'sync' && run.result?.cleanup_plan && run.status === 'succeeded' && new Date(run.created_at).getTime() >= pendingCleanupSince)
       if (preview) { pendingCleanupSince = 0; await reviewCleanup(preview.result.cleanup_plan) }

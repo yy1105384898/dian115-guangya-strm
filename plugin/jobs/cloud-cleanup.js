@@ -88,7 +88,7 @@ export async function cleanList(ctx, settings, parent, path) {
   }
   throw new Error('目录分页超过上限')
 }
-async function waitDeletion(ctx, settings, response) {
+export async function waitDeletion(ctx, settings, response) {
   const taskId = response?.data?.taskId
   if (taskId === undefined || taskId === '') return
   if (typeof taskId !== 'string' || !taskId.trim()) throw new Error('删除任务标识异常，请到光鸭核查；不会重复提交删除')

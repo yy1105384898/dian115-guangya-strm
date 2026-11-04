@@ -3,7 +3,7 @@ import { beijingTime } from './shared/schedule.js'
 
 export function mountSyncLog(panel, app, ctx, feedback) {
   const doc = panel.ownerDocument, node = (tag, cls, text) => element(doc, tag, cls, text)
-  panel.innerHTML = '<div class="card-head"><h3>同步与入库日志</h3><div class="actions"><span class="badge" data-count></span><button data-clear class="danger compact">清空记录</button></div></div><div class="table-wrap" style="max-height:360px;overflow:auto"><table class="rules-table"><thead><tr><th>时间</th><th>类型</th><th>状态</th><th>内容</th><th>进度</th><th>操作</th></tr></thead><tbody></tbody></table></div><p class="help" style="padding:0 18px 12px">仅显示北京时间当天的日志，自动刷新。删除仅移除本页记录，系统任务历史保留。</p>'
+  panel.innerHTML = '<div class="card-head"><h3>同步日志</h3><div class="actions"><span class="badge" data-count></span><button data-clear class="danger compact">清空记录</button></div></div><div class="table-wrap" style="max-height:360px;overflow:auto"><table class="rules-table"><thead><tr><th>时间</th><th>类型</th><th>状态</th><th>内容</th><th>进度</th><th>操作</th></tr></thead><tbody></tbody></table></div><p class="help" style="padding:0 18px 12px">仅显示北京时间当天的日志，自动刷新。删除仅移除本页记录，系统任务历史保留。</p>'
   let visible = [], hidden = new Set(), busy = false, disposed = false
   const ongoing = run => !run.library && ['queued', 'running', 'attention_required'].includes(run.status)
   const labels = { queued: '排队中', running: '同步中', succeeded: '完成', failed: '失败', cancelled: '已取消', canceled: '已取消', interrupted: '已中断', attention_required: '需要核对' }
@@ -52,38 +52,23 @@ export function mountSyncLog(panel, app, ctx, feedback) {
         remove.onclick = () => removeRecords([String(run.id)]); actions.append(remove)
       }
       const date = new Date(run.created_at).getTime()
-      row.append(node('td', '', Number.isFinite(date) ? beijingTime(date) : '—'), node('td', '', run.library ? '入库' : '同步'), state,
+      row.append(node('td', '', Number.isFinite(date) ? beijingTime(date) : '—'), node('td', '', run.job_id === 'duplicate-source' ? '重复来源清理' : '同步'), state,
         node('td', '', run.error || run.message || '光鸭 STRM 同步'),
         node('td', '', !run.library && Number.isFinite(Number(run.progress)) ? Math.max(0, Math.min(100, Number(run.progress))) + '%' : '—'), actions)
       body.append(row)
     }
-    if (!visible.length) { const row = node('tr'), cell = node('td', 'empty', '今天暂无同步或入库日志'); cell.colSpan = 6; row.append(cell); body.append(row) }
+    if (!visible.length) { const row = node('tr'), cell = node('td', 'empty', '今天暂无同步日志'); cell.colSpan = 6; row.append(cell); body.append(row) }
   }
   panel.querySelector('[data-clear]').onclick = () => removeRecords(visible.filter(run => !ongoing(run)).map(run => String(run.id)))
   return {
-    async update(runs, rules = [], libraryInfo = {}) {
+    async update(runs) {
       const saved = await ctx.storage.get('sync_hidden_records') || []
-      const librarySaved = new Set(await ctx.storage.get('library_hidden_records') || [])
       if (disposed) return
       hidden = new Set(saved)
-      const sync = runs.filter(run => run.job_id === 'sync' && !hidden.has(String(run.id))).map(run => ({ ...run, storageId: String(run.id), id: 'sync:' + run.id }))
-      const library = []
-      const states = { confirmed: '媒体库已有匹配', scanning: '等待媒体库扫描', unverified: '无法精确核实', query_error: '查询待重试' }
-      for (const rule of rules) {
-        const info = libraryInfo[rule.id] || {}
-        for (const entry of Object.values(info.mail?.entries || {})) {
-          const key = JSON.stringify([rule.id, entry.path, entry.signature])
-          if (librarySaved.has(key)) continue
-          const receipt = info.state?.entries?.[entry.path], current = receipt?.signature === entry.signature ? receipt : null
-          const label = current ? states[current.status] || current.status : info.state?.submitted ? '已提交媒体库扫描' : '等待刷新'
-          const message = rule.name + ' · ' + entry.rawPath + (current?.message ? ' · ' + current.message : '') + (info.state?.refresh_error ? ' · ' + info.state.refresh_error : '')
-          const at = Number(entry.at) || Number(current?.checked_at) || 0
-          library.push({ id: 'library:' + key, storageId: key, library: true, status: current?.status === 'confirmed' ? 'succeeded' : 'library', label, message, created_at: at ? new Date(at).toISOString() : '', logs: [message, 'Emby 按 TMDB 和季集匹配，不代表已核实本次文件路径。'] })
-        }
-      }
+      const sync = runs.filter(run => ['sync', 'duplicate-source'].includes(run.job_id) && !hidden.has(String(run.id))).map(run => ({ ...run, storageId: String(run.id), id: 'sync:' + run.id }))
       const day = value => { const time = new Date(value).getTime(); return Number.isFinite(time) ? new Date(time + 8 * 3600000).toISOString().slice(0, 10) : '' }
       const today = day(Date.now())
-      visible = [...sync, ...library].filter(run => day(run.created_at) === today).sort((a, b) => (new Date(b.created_at).getTime() || 0) - (new Date(a.created_at).getTime() || 0))
+      visible = sync.filter(run => day(run.created_at) === today).sort((a, b) => (new Date(b.created_at).getTime() || 0) - (new Date(a.created_at).getTime() || 0))
       render()
     },
     dispose() { disposed = true }

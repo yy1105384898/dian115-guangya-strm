@@ -75,7 +75,6 @@ async function syncRule(ctx, settings, rule, full, scopes = null, request = {}) 
       }
       inventory[destination] = hash
       owned[destination] = {hash,kind:'strm',rawPath:file.rawPath}
-      if ((libraryPending?.output_path !== rule.output_path || !libraryPending?.entries?.[destination]) && !libraryFiles.has(destination)) libraryFiles.set(destination, { destination, rawPath: file.rawPath, signature: ctx.crypto.sha256(destination + ':' + hash) })
       processed++; await progress()
     }
     for (const file of metadata) {

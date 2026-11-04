@@ -10,15 +10,7 @@ export async function enqueueLibrary(ctx, rule, files) {
       signature: file.signature, at: new Date().toISOString() }
   }
   await ctx.storage.set(key, { version: ctx.crypto.randomUUID(), at: Date.now(), rule_name: rule.name, output_path: rule.output_path, entries })
-  await ctx.task.log(rule.name + '：' + files.length + ' 项输出已登记媒体库刷新，入库状态等待 Emby 核实')
-}
-
-function identity(path) {
-  const tmdb = /\{tmdbid[=\-](\d+)\}/i.exec(path)?.[1]
-  const episode = /S(\d+)E(\d+)/i.exec(path)
-  const part = path.split('/').find(part => /\{tmdbid[=\-]\d+\}/i.test(part)) || ''
-  const name = part.replace(/\s*-?\{tmdbid[=\-]\d+\}.*$/i, '').replace(/\s*\(\d{4}\)\s*$/, '').trim()
-  return { tmdb, episode, name }
+  await ctx.task.log(rule.name + '：' + files.length + ' 项输出已登记媒体库刷新，等待 Emby 扫描')
 }
 
 export async function run(ctx) {
@@ -56,53 +48,5 @@ export async function run(ctx) {
       await ctx.task.log('STRM 已生成，媒体库刷新待重试：' + error.message)
     }
   }
-  let budget = 5
-  for (const { rule, mail, state } of pending) {
-    state.entries ||= {}
-    const ordered = Object.values(mail.entries).sort((a, b) => (state.entries[a.path]?.checked_at || 0) - (state.entries[b.path]?.checked_at || 0))
-    for (const entry of ordered) {
-      const old = state.entries[entry.path]
-      if (old?.signature === entry.signature && ['confirmed', 'unverified'].includes(old.status)) continue
-      if (refresh.versions[rule.id] !== mail.version) continue
-      if (old?.signature === entry.signature && Date.now() - (old.checked_at || 0) < 60000) continue
-      if (budget-- <= 0) break
-      const receipt = { signature: entry.signature, checked_at: Date.now(), status: 'scanning', name: entry.rawPath }
-      try {
-        const target = identity(entry.rawPath)
-        if (!target.tmdb || !target.name) {
-          receipt.status = 'unverified'; receipt.message = '扫描已提交，缺少 TMDB 标识，无法精确核实入库'
-        } else {
-          let found = null
-          if (target.episode) {
-            const result = await ctx.api.get('/api/plugin-host/emby/episodes?tmdb_id=' + target.tmdb + '&season=' + Number(target.episode[1]) )
-            if (String(result?.tmdb_id) !== target.tmdb || Number(result?.season) !== Number(target.episode[1]) || typeof result?.covered_episodes !== 'string') throw new Error('宿主未返回有效的季集覆盖信息')
-            const wanted = Number(target.episode[2])
-            if (result.covered_episodes.split(',').some(part => {
-              const match = /^\s*(\d+)(?:\s*-\s*(\d+))?\s*$/.exec(part)
-              return match && wanted >= Number(match[1]) && wanted <= Number(match[2] || match[1])
-            })) found = { name: target.name + ' · ' + target.episode[0] }
-          } else {
-            const result = await ctx.api.get('/api/plugin-host/emby/items?type=Movie&q=' + encodeURIComponent(target.name) + '&limit=50')
-            if (!Array.isArray(result?.items)) throw new Error('Emby 查询未返回有效媒体列表')
-            for (const item of result.items) {
-              const provider = item.provider_ids || {}
-              if (String(provider.Tmdb || provider.tmdb || '') === target.tmdb) { found = item; break }
-            }
-          }
-          if (found) {
-            receipt.status = 'confirmed'; if (found.id) receipt.item_id = found.id
-            receipt.name = found.name
-            receipt.message = '媒体库中已确认同一 TMDB 条目' + (target.episode ? '及季集' : '')
-            await ctx.task.log('入库核实：' + receipt.name + '（媒体身份匹配，不代表本次文件路径已核实）')
-          } else receipt.message = '扫描已提交，尚未查询到匹配媒体；稍后重查'
-        }
-      } catch (error) { receipt.status = 'query_error'; receipt.message = error.message }
-      state.entries[entry.path] = receipt
-    }
-    state.updated_at = new Date().toISOString()
-    state.refresh_error = refresh.error || ''
-    state.submitted = refresh.versions[rule.id] === mail.version
-    await ctx.storage.set('library_state:' + rule.id, state)
-  }
-  return { checked: Math.min(5, 5 - budget) }
+  return { refreshed: needRefresh.length > 0 && !refresh.error, error: refresh.error || '' }
 }

@@ -2,6 +2,7 @@ import { parseCron, matchesCron } from './schedule.js'
 import { getRules, scheduleExpression } from './rules.js'
 import { organizeRequests } from './organize-trigger.js'
 import { reconcileMonitors, realtimeRequests } from './source-monitor.js'
+import { dispatchDuplicates } from './duplicate-source.js'
 import { mergeChanges } from './monitor-log.js'
 
 export async function run(ctx, input = {}) {
@@ -48,11 +49,13 @@ export async function run(ctx, input = {}) {
     if (existing) existing.full = true
     else requests.push({rule_id:id,full:true})
   }
-  if (!requests.length) return {skipped:true}
   const response = await ctx.api.get(`/api/extensions/v3/${ctx.plugin.id}/runs?limit=200`)
   const runs = Array.isArray(response) ? response : response?.items
   if (!Array.isArray(runs)) throw new Error('无法确认同步任务状态，本次保留待同步请求')
-  if (runs.some(run => ['sync','cloud-cleanup'].includes(run.job_id) && ['queued','running','attention_required'].includes(run.status))) return {deferred:true}
+  if (runs.some(run => ['sync','cloud-cleanup','duplicate-source'].includes(run.job_id) && ['queued','running','attention_required'].includes(run.status))) return {deferred:true}
+  try { if (await dispatchDuplicates(ctx)) return { deferred: true } }
+  catch (error) { await ctx.task.log('重复来源检查停止：' + error.message) }
+  if (!requests.length) return {skipped:true}
   const lastSubmission = Number(await ctx.storage.get('automatic_sync_last_submission')) || 0
   const hasOrganize = requests.some(request => request.organize_version || request.realtime_version)
   if (Date.now()-lastSubmission < (hasOrganize ? 3000 : 300000)) return {deferred:true}

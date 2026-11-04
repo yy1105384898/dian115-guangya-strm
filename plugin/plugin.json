@@ -2,9 +2,9 @@
   "schema_version": 3,
   "id": "community.guangya-strm",
   "name": "光鸭 STRM 同步",
-  "version": "1.0.1",
+  "version": "1.0.3",
   "author": "yy1105384898",
-  "description": "单账号登录、整理目录增量同步、Emby 刷新与入库查询、元数据下载及文件清理。",
+  "description": "单账号登录、整理目录增量同步、Emby 刷新、元数据下载及文件清理。",
   "requires": {
     "api": "3.8"
   },
@@ -32,7 +32,7 @@
       "timeout_seconds": 90,
       "allow_overlap": false,
       "queue": false,
-      "title": "光鸭媒体库刷新与入库核实"
+      "title": "光鸭媒体库刷新"
     },
     {
       "id": "source-change",
@@ -88,10 +88,25 @@
       "allow_overlap": false,
       "queue": false,
       "title": "光鸭整理及定时检查"
+    },
+    {
+      "id": "duplicate-source",
+      "entry": "jobs/duplicate-source.js",
+      "handler": "run",
+      "recover": "recover",
+      "timeout_seconds": 600,
+      "allow_overlap": false,
+      "title": "光鸭重复来源清理"
     }
   ],
   "events": [
-    { "event": "host", "job": "organize-event", "types": [ "library_organize_*" ] }
+    {
+      "event": "host",
+      "job": "organize-event",
+      "types": [
+        "library_organize_*"
+      ]
+    }
   ],
   "http": {
     "entry": "jobs/http.js",
