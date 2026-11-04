@@ -2,9 +2,9 @@
   "schema_version": 3,
   "id": "community.guangya-strm",
   "name": "光鸭 STRM 同步",
-  "version": "0.7.20",
-  "author": "Community",
-  "description": "单账号登录、STRM 同步、元数据下载及独立文件清理页签。",
+  "version": "1.0.0",
+  "author": "yy1105384898",
+  "description": "单账号登录、整理目录增量同步、Emby 刷新与入库查询、元数据下载及文件清理。",
   "requires": {
     "api": "3.8"
   },
@@ -24,6 +24,16 @@
     }
   ],
   "jobs": [
+    {
+      "id": "library-refresh",
+      "entry": "jobs/library-refresh.js",
+      "handler": "run",
+      "interval_seconds": 30,
+      "timeout_seconds": 90,
+      "allow_overlap": false,
+      "queue": false,
+      "title": "光鸭媒体库刷新与入库核实"
+    },
     {
       "id": "source-change",
       "entry": "jobs/source-change.js",

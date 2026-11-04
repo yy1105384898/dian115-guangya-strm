@@ -12,7 +12,7 @@ export function mountCleaner(app, panel, ctx, feedback) {
     <div class="clean-layout"><div class="card"><div class="card-head"><h3>清理规则</h3><span class="badge" data-clean="count">0 条</span></div><div data-clean="rules"></div></div>
     <aside class="card"><div class="card-head"><h3>目录保护</h3></div><div class="card-body"><p class="help">只处理选定的光鸭子目录，不允许清理整个网盘。</p><p class="help">排除目录及其全部内容保留。每次删除前重新读取规则，规则或账号变化时立即停止。</p><p class="help">此功能直接清理光鸭云端；STRM 输出目录与 115 网盘不会作为清理目标。</p><p class="help">宿主整理、转存等目录不会自动加入排除列表。需要保留整个目录时，请在规则中手动排除。</p><p class="help">任务进度、删除明细和错误在系统任务队列查看。</p></div></aside></div>
     <div class="card"><div class="card-head"><h3>统一定时执行</h3><small>北京时间</small></div><div class="card-body"><div class="inline"><label class="sync-option"><input type="checkbox" data-clean="scheduleOn">启用</label><input data-clean="cron" aria-label="清理 Cron" placeholder="0 3 * * *"><button data-clean="saveSchedule" class="primary">保存时间</button></div><p class="help">仅执行已勾选“加入统一定时”的规则。支持五段 Cron，或秒字段为 0 的六段 Cron；默认每天凌晨 3 点。</p><p class="help" data-clean="next"></p></div></div>
-    <div class="card"><div class="card-head"><h3>任务队列</h3><div class="actions"><span class="badge" data-clean="taskCount">0 条</span><button class="compact danger" data-clean="clearFailed">清除失败记录</button></div></div><div class="table-wrap"><table class="rules-table cleanup-task-table"><thead><tr><th>任务</th><th>状态</th><th>扫描文件</th><th>预计清理 文件 / 文件夹</th><th>已清理 文件 / 文件夹</th><th>当前阶段</th><th>结果说明</th><th>操作</th></tr></thead><tbody data-clean="tasks"></tbody></table></div></div>`
+    <div class="card"><div class="card-head"><h3>任务队列</h3><div class="actions"><span class="badge" data-clean="taskCount">0 条</span><button class="compact danger" data-clean="clearAll">清空全部记录</button></div></div><div class="table-wrap"><table class="rules-table cleanup-task-table"><thead><tr><th>任务</th><th>状态</th><th>扫描文件</th><th>预计清理 文件 / 文件夹</th><th>已清理 文件 / 文件夹</th><th>当前阶段</th><th>结果说明</th><th>操作</th></tr></thead><tbody data-clean="tasks"></tbody></table></div></div>`
   const $ = key => panel.querySelector(`[data-clean="${key}"]`)
   let rules = [], disposed = false, timer, busy = false, active = false, waiting = null, loading = false, inlineConfirm = null
   function guard(button, operation) {
@@ -90,7 +90,7 @@ export function mountCleaner(app, panel, ctx, feedback) {
     if (disposed) return
     queueItems = entries.filter(item => !omitted.has(item.id)).sort((a, b) => b.number - a.number)
     $('taskCount').textContent = queueItems.length + ' 条'
-    $('clearFailed').disabled = !queueItems.some(item => item.status === 'failed')
+    $('clearAll').disabled = !queueItems.some(item => !['queued', 'running', 'attention_required'].includes(item.status))
     $('tasks').replaceChildren()
     const labels = { queued: '排队中', running: '运行中', succeeded: '完成', failed: '失败', cancelled: '已取消', canceled: '已取消', interrupted: '已中断', attention_required: '需要核对' }
     const stages = { scan: '扫描目录', delete: '清理', before_delete: '核对删除范围', stopped: '停止', completed: '完成' }
@@ -361,7 +361,7 @@ export function mountCleaner(app, panel, ctx, feedback) {
     rules = cleanRules(settings); $('scheduleOn').checked = settings.cleanup_schedule_enabled === true
     $('cron').value = settings.cleanup_cron || '0 3 * * *'; updateNext(); render(); await poll()
   }
-  $('clearFailed').onclick = () => confirmRemoveRecords(queueItems.filter(item => item.status === 'failed').map(item => item.id))
+  $('clearAll').onclick = () => confirmRemoveRecords(queueItems.filter(item => !['queued', 'running', 'attention_required'].includes(item.status)).map(item => item.id))
   $('once').onclick = () => editRule(null, true)
   $('add').onclick = () => editRule(null)
   $('refresh').onclick = guard($('refresh'), refresh)

@@ -1,5 +1,2 @@
-import { getRules } from './rules.js'
-import { receiveSourceChange } from './source-monitor.js'
-export async function run(ctx, input = {}) {
-  return receiveSourceChange(ctx, input, getRules(await ctx.settings.get()))
-}
+// Ignore callbacks from retired CD2 watches, including already queued deliveries.
+export async function run() { return { skipped: true, reason: 'organize-success-only' } }

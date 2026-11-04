@@ -41,7 +41,7 @@ export async function resolveSource(ctx, settings, list) {
   return id
 }
 
-export async function scanRule(ctx, settings, rule) {
+export async function scanRule(ctx, settings, rule, scopes = null) {
   const stored = await ctx.storage.get('tokens')
   let token = stored?.access_token || settings.access_token, refreshed = false
   async function list(parentId) {
@@ -54,7 +54,22 @@ export async function scanRule(ctx, settings, rule) {
     }
   }
   const root = await resolveSource(ctx, { ...settings, ...rule }, list)
-  const stack = [{id: root, path: '', rawPath: ''}], seen = new Set(), files = []
+  const starts = []
+  if (scopes) {
+    if (!Array.isArray(scopes) || !scopes.length || scopes.length > 200) throw new Error('增量目录范围无效')
+    const uniqueScopes = [...new Set(scopes)].filter(scope => !scopes.some(parent => parent !== scope && (parent === '' || scope.startsWith(parent + '/'))))
+    for (const scope of uniqueScopes) {
+      if (typeof scope !== 'string' || scope.startsWith('/') || /[\\\r\n\0]/.test(scope) || scope.split('/').some(p => p === '.' || p === '..')) throw new Error('增量目录路径无效')
+      let id = root, rawPath = '', path = ''
+      for (const part of scope.split('/').filter(Boolean)) {
+        const matches = (await list(id)).filter(item => isDirectory(item) && itemName(item) === part)
+        if (matches.length !== 1 || !itemId(matches[0])) throw new Error('增量目标目录已变化，保留任务等待重试：' + scope)
+        id = itemId(matches[0]); rawPath += (rawPath ? '/' : '') + part; path += (path ? '/' : '') + escapePathPart(part)
+      }
+      starts.push({ id, rawPath, path })
+    }
+  } else starts.push({ id: root, path: '', rawPath: '' })
+  const stack = starts, seen = new Set(), files = []
   while (stack.length) {
     const dir = stack.pop()
     if (seen.has(dir.id)) continue

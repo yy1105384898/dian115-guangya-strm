@@ -2,11 +2,12 @@ import { parseCron, matchesCron } from './schedule.js'
 import { getRules, scheduleExpression } from './rules.js'
 import { organizeRequests } from './organize-trigger.js'
 import { reconcileMonitors, realtimeRequests } from './source-monitor.js'
+import { mergeChanges } from './monitor-log.js'
 
 export async function run(ctx, input = {}) {
   const rules = getRules(await ctx.settings.get()), minute = Math.floor(Date.now()/60000)
   try { await reconcileMonitors(ctx, rules, input.reconcile === true) }
-  catch (error) { await ctx.task.log('源目录监听检查失败：' + error.message) }
+  catch (error) { await ctx.task.log('停用旧目录监听失败，将重试：' + error.message) }
   let incremental = []
   if (rules.some(rule => rule.enabled && rule.organize_enabled !== false)) {
     try { incremental = (await organizeRequests(ctx,rules)).requests }
@@ -28,12 +29,18 @@ export async function run(ctx, input = {}) {
   const requests = [...incremental]
   for (const realtime of await realtimeRequests(ctx, rules)) {
     const existing = requests.find(request => request.rule_id === realtime.rule_id)
-    if (existing) existing.realtime_version = realtime.realtime_version
+    if (existing) {
+      existing.realtime_version = realtime.realtime_version
+      existing.changes = mergeChanges(existing.changes || [], realtime.changes || [])
+      existing.scopes = existing.scopes && realtime.scopes ? [...new Set([...existing.scopes, ...realtime.scopes])] : null
+    }
     else requests.push(realtime)
   }
   for (const id of Object.keys(incPending)) {
     if (!rules.some(rule => rule.id === id && rule.enabled && rule.schedule_enabled)) { delete incPending[id]; continue }
-    if (!requests.some(request => request.rule_id === id)) requests.push({rule_id:id,full:false,trigger:'timer'})
+    const existing = requests.find(request => request.rule_id === id)
+    if (existing) existing.scopes = null
+    else requests.push({rule_id:id,full:false,trigger:'timer'})
   }
   for (const id of Object.keys(fullPending)) {
     if (!rules.some(rule => rule.id === id && rule.enabled && rule.schedule_enabled && Number(rule.full_minutes)>0)) { delete fullPending[id]; continue }
@@ -60,6 +67,6 @@ export async function run(ctx, input = {}) {
   }
   await ctx.storage.set('incremental_sync_pending',incPending)
   await ctx.storage.set('full_sync_pending',fullPending)
-  await ctx.task.log('已提交：' + requests.map(request => (rules.find(rule => rule.id===request.rule_id)?.name || request.rule_id) + (request.full ? '（定时全量）' : request.realtime_version ? '（源目录变化增量）' : request.organize_version ? '（整理后增量）' : '（定时增量）')).join('、'))
+  await ctx.task.log('已提交：' + requests.map(request => (rules.find(rule => rule.id===request.rule_id)?.name || request.rule_id) + (request.full ? '（定时全量）' : request.realtime_version ? '（整理后增量）' : request.organize_version ? '（整理后增量）' : '（定时增量）')).join('、'))
   return {submitted:requests.length}
 }

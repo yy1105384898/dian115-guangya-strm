@@ -1,5 +1,6 @@
 import { mountedRule } from './clouds.js'
 import { sourcePaths, cd2HostPath } from './rules.js'
+import { mergeChanges } from './monitor-log.js'
 
 const STATE = 'organize_trigger_v1'
 function timestamp(value) {
@@ -53,9 +54,19 @@ export async function organizeRequests(ctx, rules) {
         const excluded = (rule.excluded_paths || []).some(path => within(record.target_path,root + '/' + path) || within(record.target_path,host + '/' + path))
         if (excluded) continue
         // STRM does not need to wait for the entire organize task or sidecars.
-        state.pending[rule.id] = {version:ctx.crypto.randomUUID(),ready:now}
+        const matched = within(record.target_path, root) ? root : host
+        const relative = record.target_path.slice(matched.replace(/\/+$/, '').length).replace(/^\//, '')
+        const parent = relative.includes('/') ? relative.slice(0, relative.lastIndexOf('/')) : ''
+        const change = { path: record.target_path, kind: 'upsert', source: '宿主整理成功历史', at }
+        const done = await ctx.storage.get('organize_done:' + rule.id)
+        const prior = state.pending[rule.id]?.version === done ? null : state.pending[rule.id]
+        const merge = previous => previous && !previous.scopes ? null : [...new Set([...(previous?.scopes || []), parent])]
+        state.pending[rule.id] = {version:ctx.crypto.randomUUID(),ready:prior?.ready || now + 3000,scopes:merge(prior),changes:mergeChanges(prior?.changes || [], [change])}
         // A quiet-period pass also picks up NFO/images written after the success receipt.
-        if (rule.metadata_mode !== 'off') state.settle[rule.id] = {version:ctx.crypto.randomUUID(),ready:now + 60000}
+        if (rule.metadata_mode !== 'off') {
+          const previous = state.settle[rule.id]?.version === done ? null : state.settle[rule.id]
+          state.settle[rule.id] = {version:ctx.crypto.randomUUID(),ready:now + 60000,scopes:merge(previous),changes:mergeChanges(previous?.changes || [], [change])}
+        }
       }
       seen.add(signature)
     }
@@ -69,7 +80,7 @@ export async function organizeRequests(ctx, rules) {
       const rule = rules.find(item => item.id === id)
       const done = await ctx.storage.get('organize_done:' + id)
       if (!rule || !rule.enabled || rule.organize_enabled === false || done === pending.version) { delete state[slot][id]; continue }
-      if (pending.ready <= now && !requests.some(request => request.rule_id === id)) requests.push({rule_id:id,full:false,organize_version:pending.version})
+      if (pending.ready <= now && !requests.some(request => request.rule_id === id)) requests.push({rule_id:id,full:false,organize_version:pending.version,scopes:pending.scopes || null,changes:pending.changes || [],trigger:slot === 'settle' ? 'metadata-settle' : 'organize'})
     }
   }
   await ctx.storage.set(STATE,state)

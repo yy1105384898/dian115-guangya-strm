@@ -6,19 +6,20 @@ import { editRule } from './rule-editor.js'
 import { getRules, validateRule, sourcePaths } from './shared/rules.js'
 import { beijingTime } from './shared/schedule.js'
 import { mountCleaner } from './cleaner.js'
+import { mountSyncLog } from './sync-log.js'
 
 export async function mount(root, ctx) {
   const doc = root.ownerDocument, win = doc.defaultView, node = (tag, cls, text) => element(doc, tag, cls, text)
   const app = node('section', 'gy'), style = node('style'); style.textContent = styles; app.append(style)
   const shell = node('div')
   shell.innerHTML = `
-    <header class="top"><div class="brand"><div class="logo" aria-hidden="true">▱</div><div><h2>光鸭 STRM <span class="version">v0.7.20</span></h2><small>网盘目录同步 · 文件清理</small></div></div><span class="badge" data-id="loginBadge">读取登录状态…</span></header>
+    <header class="top"><div class="brand"><div class="logo" aria-hidden="true">▱</div><div><h2>光鸭 STRM <span class="version">v1.0.0</span></h2><small>网盘目录同步 · 文件清理</small></div></div><span class="badge" data-id="loginBadge">读取登录状态…</span></header>
     <div class="tabs" role="tablist" aria-label="光鸭插件"><button data-tab="settings" role="tab" class="active" aria-selected="true"><svg viewBox="0 0 20 20" aria-hidden="true"><path d="M7 5h10M7 10h10M7 15h10M2 4l1 1 2-2M2 9l1 1 2-2M2 14l1 1 2-2"/></svg>STRM 同步</button><button data-tab="cleaner" role="tab" aria-selected="false"><svg viewBox="0 0 20 20" aria-hidden="true"><path d="M3 5h14M8 5V3h4v2M5 5l1 12h8l1-12M8 8v6M12 8v6"/></svg>文件清理</button><button data-tab="login" role="tab" aria-selected="false"><svg viewBox="0 0 20 20" aria-hidden="true"><circle cx="10" cy="6" r="3"/><path d="M4 17v-2a6 6 0 0 1 12 0v2"/></svg>账号登录</button></div>
     <section data-page="settings" role="tabpanel"><div class="toolbar"><span class="badge">源路径 · 输出目录 · 同步规则</span><div class="actions"><button class="primary" data-id="addRule">＋ 新增规则</button><button data-id="refresh">↻ 刷新</button></div></div>
     <div class="rule-stats"><div><small>全部</small><strong data-id="total">0</strong></div><div><small>启用</small><strong data-id="enabled">0</strong></div><div><small>已扫描</small><strong data-id="indexed">0</strong></div><div><small>生成 STRM</small><strong data-id="generated">0</strong></div></div>
     <div class="searchbar"><input data-id="search" aria-label="搜索同步规则" placeholder="搜索规则名称 / 源路径 / 输出目录"><select data-id="filter" aria-label="规则状态"><option value="all">全部状态</option><option value="enabled">已启用</option><option value="disabled">已禁用</option></select><small data-id="count"></small></div>
     <div class="card"><div class="table-wrap"><table class="rules-table"><thead><tr><th>规则名称</th><th>源路径</th><th>输出路径</th><th>模式</th><th>状态</th><th>生成 STRM</th><th>同步方式</th><th>元数据</th><th>目录树</th><th>最后成功同步</th><th>操作</th></tr></thead><tbody data-id="rules"></tbody></table></div><div data-id="empty" class="empty" hidden>还没有同步规则。点击右上角“新增规则”开始。</div></div>
-    </section>
+    <div class="card" data-id="syncLog" style="margin-top:20px"></div></section>
     <section data-page="cleaner" role="tabpanel" hidden></section>
     <section data-page="login" role="tabpanel" hidden><div class="page-head"><h2>光鸭账号登录</h2><p class="muted">登录信息加密保存。同步与文件清理共用此账号。</p></div><div class="card"><div class="card-head"><h3>登录凭证</h3><span class="badge" data-id="accountState">未登录</span></div><div class="card-body"><div class="account-line"><strong data-id="accountTitle">尚未登录</strong><p class="help" data-id="accountDetail">使用手机号接收验证码后登录。</p></div>
     <div class="field"><label class="label" for="gy-phone">手机号</label><input id="gy-phone" data-id="phone" type="tel" autocomplete="tel" placeholder="手机号，默认 +86"></div>
@@ -30,7 +31,8 @@ export async function mount(root, ctx) {
     <div class="feedback-line" data-id="feedback" role="status" aria-live="polite">正在载入配置…</div>`
   app.append(shell); root.append(app)
   const $ = id => shell.querySelector(`[data-id="${id}"]`)
-  let settings = {}, rules = [], summaries = {}, monitorStatus = {}, disposed = false, pollTimer, cooldownTimer, cooldownUntil = 0, mutationBusy = false, activeTask = false, initialAccountChecked = false, pendingCleanupSince = 0
+  const syncLog = mountSyncLog($('syncLog'), app, ctx, (...args) => feedback(...args))
+  let settings = {}, rules = [], summaries = {}, monitorStatus = {}, libraryInfo = {}, disposed = false, pollTimer, cooldownTimer, cooldownUntil = 0, mutationBusy = false, activeTask = false, initialAccountChecked = false, pendingCleanupSince = 0
   const feedback = (message, kind = '') => { $('feedback').textContent = message; $('feedback').className = 'feedback-line status ' + kind }
   const random = () => Array.from(win.crypto.getRandomValues(new Uint8Array(32)), n => n.toString(16).padStart(2, '0')).join('')
   const hook = async (path, body = {}) => { const response = await ctx.api.post(`/api/extensions/v3/${ctx.id}/hook/${path}`, body); if (response?.error) throw new Error(response.error); return response }
@@ -76,12 +78,10 @@ export async function mount(root, ctx) {
     $('empty').textContent = rules.length ? '没有匹配的规则。' : '还没有同步规则。点击右上角“新增规则”开始。'
     for (const rule of visible) {
       const row = node('tr'), summary = summaries[rule.id]
-      const monitor = monitorStatus[rule.id], mode = badge([rule.organize_enabled !== false ?
-        monitor?.error ? '监控异常' : monitor?.registered ? monitor.initialized ? '目录监控' : '建立监听基线' : '等待注册监控' : '',
-        rule.schedule_enabled ? '定时' : ''].filter(Boolean).join('＋') || '手动')
-      mode.title = monitor?.error || (monitor?.path ? '监听源目录：' + monitor.path + '；CD2 每 60 秒检查，整理成功事件优先派发。' : '保存后自动注册源目录监听；无 CD2 时使用整理事件和定时同步。')
+      const monitor = monitorStatus[rule.id], mode = badge([rule.schedule_enabled ? '定时' : '', rule.organize_enabled !== false ? '实时' : ''].filter(Boolean).join('＋') || '手动', rule.schedule_enabled || rule.organize_enabled !== false ? 'ok' : '')
+      mode.title = '实时：监听宿主整理完成事件，并补查整理成功记录，按目标目录触发增量；不监听网盘变化。'
       const source = rule.cloud_name ? sourcePaths(rule).cd2 : rule.source_display_path || '/'
-      const values = [rule.name, source, rule.output_path, rule.link_mode === 'path' ? 'CD2 路径' : '链接', badge(rule.enabled ? '启用' : '禁用', rule.enabled ? 'ok' : ''), badge(rule.generate_strm ? '开启' : '关闭', rule.generate_strm ? 'ok' : ''), mode, badge(rule.metadata_mode === 'cloud' ? '云端覆盖' : rule.metadata_mode === 'local' ? '旧版保留本地' : '不启用', rule.metadata_mode !== 'off' ? 'ok' : ''), summary ? `${summary.directories}目录 / ${summary.files ?? summary.videos}文件` : '尚未扫描', summary?.at ? beijingTime(new Date(summary.at).getTime()) : '—']
+      const values = [rule.name, source, rule.output_path, rule.link_mode === 'path' ? 'CD2 路径' : '链接', badge(rule.enabled ? '启用' : '禁用', rule.enabled ? 'ok' : ''), badge(rule.generate_strm ? '开启' : '关闭', rule.generate_strm ? 'ok' : ''), mode, badge(rule.metadata_mode === 'cloud' ? '云端覆盖' : rule.metadata_mode === 'local' ? '旧版保留本地' : '关闭', rule.metadata_mode !== 'off' ? 'ok' : ''), badge(summary?.tree ? `${summary.tree.directories}目录 / ${summary.tree.files}文件` : summary && !summary.scoped ? `${summary.directories}目录 / ${summary.files ?? summary.videos}文件` : '待全量统计'), summary?.at ? beijingTime(new Date(summary.at).getTime()).replace(/^\d{4}-/, '') : '—']
       for (const value of values) { const cell = node('td'); if (typeof value === 'string') { cell.textContent = value; cell.title = value } else cell.append(value); row.append(cell) }
       const actions = node('td'), buttons = node('div', 'inline'), edit = node('button', 'compact', '编辑'), sync = node('button', 'compact', '同步'), more = node('details', 'more'), menu = node('div', 'more-menu')
       const summaryButton = node('summary', '', '更多 ▾'); more.append(summaryButton, menu)
@@ -169,10 +169,12 @@ export async function mount(root, ctx) {
     if (disposed) return
     const items = (Array.isArray(response) ? response : response?.items || []).filter(run => ['sync', 'cloud-cleanup'].includes(run.job_id))
     monitorStatus = await ctx.storage.get('source_monitor_status') || {}
+    for (const rule of rules) libraryInfo[rule.id] = { mail: await ctx.storage.get('library_pending:' + rule.id), state: await ctx.storage.get('library_state:' + rule.id) }
     activeTask = items.some(run => ['queued','running','attention_required'].includes(run.status))
     for (const rule of rules) summaries[rule.id] = await ctx.storage.get('last_sync:' + rule.id) || (rule.id === 'legacy' ? await ctx.storage.get('last_sync') : null)
     if (disposed) return
     renderRules()
+    await syncLog.update(items, rules, libraryInfo)
     if (pendingCleanupSince) {
       const preview = items.find(run => run.job_id === 'sync' && run.result?.cleanup_plan && run.status === 'succeeded' && new Date(run.created_at).getTime() >= pendingCleanupSince)
       if (preview) { pendingCleanupSince = 0; await reviewCleanup(preview.result.cleanup_plan) }
@@ -192,5 +194,5 @@ export async function mount(root, ctx) {
   try { await refresh(); feedback('配置已载入') } catch (error) { feedback(error.message || '读取配置失败', 'error') }
   async function poll() { try { if (!doc.hidden) await loadRuns() } catch { /* Explicit refresh reports errors without interrupting edits. */ } finally { if (!disposed) pollTimer = win.setTimeout(poll, activeTask ? 2500 : 15000) } }
   pollTimer = win.setTimeout(poll, 3000)
-  return () => { disposed = true; disposeCleaner(); win.clearTimeout(pollTimer); win.clearInterval(cooldownTimer); closeDialogs(app); app.remove() }
+  return () => { disposed = true; syncLog.dispose(); disposeCleaner(); win.clearTimeout(pollTimer); win.clearInterval(cooldownTimer); closeDialogs(app); app.remove() }
 }
