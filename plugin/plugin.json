@@ -2,9 +2,9 @@
   "schema_version": 3,
   "id": "community.guangya-strm",
   "name": "光鸭 STRM 同步",
-  "version": "0.6.3",
+  "version": "0.7.20",
   "author": "Community",
-  "description": "单账号登录、规则同步、元数据下载和经预览确认的孤立文件清理。",
+  "description": "单账号登录、STRM 同步、元数据下载及独立文件清理页签。",
   "requires": {
     "api": "3.8"
   },
@@ -25,6 +25,43 @@
   ],
   "jobs": [
     {
+      "id": "source-change",
+      "entry": "jobs/source-change.js",
+      "handler": "run",
+      "timeout_seconds": 45,
+      "allow_overlap": false,
+      "queue": false,
+      "title": "光鸭源目录变化接收"
+    },
+    {
+      "id": "organize-event",
+      "entry": "jobs/organize-event.js",
+      "handler": "run",
+      "timeout_seconds": 30,
+      "allow_overlap": true,
+      "queue": false,
+      "title": "光鸭整理事件接收"
+    },
+    {
+      "id": "cloud-cleanup",
+      "entry": "jobs/cloud-cleanup.js",
+      "handler": "run",
+      "recover": "recover",
+      "timeout_seconds": 7200,
+      "allow_overlap": false,
+      "title": "光鸭文件清理"
+    },
+    {
+      "id": "cleanup-scheduler",
+      "entry": "jobs/cleanup-scheduler.js",
+      "handler": "run",
+      "timeout_seconds": 45,
+      "interval_seconds": 60,
+      "allow_overlap": false,
+      "queue": false,
+      "title": "光鸭清理定时检查"
+    },
+    {
       "id": "sync",
       "entry": "jobs/sync.js",
       "handler": "run",
@@ -37,11 +74,14 @@
       "entry": "jobs/scheduler.js",
       "handler": "run",
       "timeout_seconds": 45,
-      "interval_seconds": 60,
+      "interval_seconds": 15,
       "allow_overlap": false,
       "queue": false,
       "title": "光鸭整理及定时检查"
     }
+  ],
+  "events": [
+    { "event": "host", "job": "organize-event", "types": [ "library_organize_*" ] }
   ],
   "http": {
     "entry": "jobs/http.js",
@@ -51,7 +91,7 @@
   },
   "declared_usage": {
     "apis": [
-      "光鸭 Web API：短信登录、Token 刷新、目录列表、下载与播放地址",
+      "光鸭 Web API：短信登录、Token 刷新、目录列表、下载、播放地址与文件删除",
       "DIAN-115 插件任务提交 API"
     ],
     "sites": [
@@ -63,6 +103,6 @@
       "用户配置的本地 STRM 和元数据输出目录",
       "用户在清单中确认删除的本插件孤立输出文件"
     ],
-    "risk": "保存用户主动提供的光鸭登录凭证；扫描选定目录并生成 STRM、按配置下载和覆盖元数据；播放回调用独立令牌鉴权并返回直链；清理仅在预览后由用户确认，且再次扫描网盘并校验文件哈希，只删除本插件记录的孤立输出文件。"
+    "risk": "保存光鸭登录凭证；扫描选定目录生成 STRM 并按配置下载元数据。文件清理页签直接删除光鸭云端文件和空目录：手动先预览确认，定时按用户明确开启的规则执行。删除前核对账号、规则、父目录和文件状态；清理根目录及用户排除目录始终保留，结果不明时停止且不自动重试。原孤立输出清理仍仅删除本插件记录的本地文件。"
   }
 }

@@ -5,13 +5,15 @@ import { scanRule } from './scanner.js'
 import { assertLocalOutput, mediaFile, metadataFile, outputPath, ownedOutputs, localHash } from './output.js'
 import { resolveDownload } from './downloads.js'
 import { cleanup } from './cleanup.js'
+import { requireIdle } from './activity.js'
 export { listDirectory, resolveSource } from './scanner.js'
 
 async function syncRule(ctx, settings, rule, full) {
   if (rule.link_mode === 'path' || rule.source_mode === 'cd2') rule = await mountedRule(ctx,rule)
   rule = validateRule(rule, getRules(settings))
   if (!settings.access_token) throw new Error('请先在“账号登录”中登录光鸭')
-  if (!settings.public_base_url || !settings.play_token) throw new Error('播放设置尚未初始化，请打开插件并保存规则')
+  const serviceURL = String(rule.service_url || settings.public_base_url || '').replace(/\/+$/, '')
+  if (rule.link_mode === 'link' && (!serviceURL || !settings.play_token)) throw new Error('播放设置尚未初始化，请打开插件并保存服务地址')
   await assertLocalOutput(ctx, rule.output_path)
   const scan = await scanRule(ctx, settings, rule)
   const media = scan.files.filter(file => mediaFile(file, rule))
@@ -45,7 +47,7 @@ async function syncRule(ctx, settings, rule, full) {
   try {
     for (const file of rule.generate_strm ? media : []) {
       const destination = outputPath(rule.output_path, file, true)
-      const url = settings.public_base_url.replace(/\/+$/, '') + '/plugin-hooks/' + ctx.plugin.id + '/play?token=' + encodeURIComponent(settings.play_token) + '&id=' + encodeURIComponent(file.id) + '&gcid=' + encodeURIComponent(file.gcid) + '&rule=' + encodeURIComponent(rule.id)
+      const url = serviceURL + '/plugin-hooks/' + ctx.plugin.id + '/play?token=' + encodeURIComponent(settings.play_token) + '&id=' + encodeURIComponent(file.id) + '&gcid=' + encodeURIComponent(file.gcid) + '&rule=' + encodeURIComponent(rule.id)
       if (rule.link_mode === 'path' && /[\r\n\0]/.test(file.rawPath)) throw new Error('源文件路径含换行等非法字符，无法生成 CD2 路径 STRM')
       const content = (rule.link_mode === 'path' ? cd2Source + '/' + file.rawPath : url) + '\n', hash = ctx.crypto.sha256(content)
       if (oldInventory[destination] === hash && await ctx.files.call({operation:'exists',path:destination})) unchanged++
@@ -91,6 +93,7 @@ async function syncRule(ctx, settings, rule, full) {
 }
 
 export async function run(ctx,input={}) {
+  await requireIdle(ctx, 'cloud-cleanup')
   if (input.action === 'cleanup_preview' || input.action === 'cleanup_commit') return cleanup(ctx,input)
   const base = await ctx.settings.get(), rules = getRules(base)
   const requests = input.requests || (input.rule_id ? [{rule_id:input.rule_id,full:!!input.full}] : rules.filter(rule=>rule.enabled).map(rule=>({rule_id:rule.id,full:!!input.full})))
@@ -99,9 +102,11 @@ export async function run(ctx,input={}) {
   for (const request of requests) {
     const rule = rules.find(item=>item.id===request.rule_id)
     if (!rule) throw new Error('同步规则不存在，请刷新规则列表')
+    if (input.scheduled && !rule.enabled) continue
     try {
       results.push(await syncRule(ctx,await loadSettings(ctx),rule,!!request.full))
       if (request.organize_version) await ctx.storage.set('organize_done:' + rule.id,request.organize_version)
+      if (request.realtime_version) await ctx.storage.set('source_change_done:' + rule.id,request.realtime_version)
     }
     catch(error) { failures.push(rule.name + '：' + error.message); await ctx.storage.set('last_error:' + rule.id,{at:new Date().toISOString(),message:error.message}); await ctx.task.log(rule.name + '：同步失败，' + error.message) }
   }

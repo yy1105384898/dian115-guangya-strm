@@ -45,6 +45,15 @@ async function post(ctx, url, body, headers, timeout = 60, allowedCodes = []) {
   if (data && typeof data === 'object' && data.code !== undefined && ![0, 200, '0', '200', ...allowedCodes].includes(data.code)) {
     throw new Error(`光鸭 API 错误 ${String(data.code).replace(/[^a-zA-Z0-9_-]/g, '').slice(0, 30)}`)
   }
+  const exceptional = allowedCodes.includes(data?.code)
+  if (!exceptional && (data?.error || data?.success === false ||
+      (data?.msg && String(data.msg).trim().toLowerCase() !== 'success'))) {
+    // Do not echo arbitrary remote text: it can contain credentials or signed URLs.
+    const msg = String(data?.msg || '')
+    const reason = /token|unauthorized|登录|令牌/i.test(msg) ? '登录失效（token）' :
+      /频繁|限流|频率|rate|too many/i.test(msg) ? '请求限流，请稍后重试' : '业务响应未通过成功校验'
+    throw new Error('光鸭 API：' + reason)
+  }
   return data
 }
 
@@ -87,8 +96,20 @@ export function findArray(value) {
   if (Array.isArray(root)) return root
   if (!root || typeof root !== 'object') throw new Error('光鸭目录列表响应格式不正确')
   for (const key of ['list', 'files', 'items', 'records', 'content', 'fileList', 'file_list', 'infoList', 'InfoList']) {
-    if (Array.isArray(root[key])) return root[key]
+    if (Array.isArray(root[key])) {
+      if (!root[key].length && Number(root.total) > 0) throw new Error('光鸭目录总数大于零但列表为空，已停止以避免误判空目录')
+      return root[key]
+    }
   }
+  // OpenList's Guangya listResp treats omitted list/total as their zero values.
+  // Accept only the exact successful empty-data shape, never unknown fields or
+  // a positive total without records. Shared by browsing, sync and cleanup.
+  const success = String(value?.msg || '').trim().toLowerCase() === 'success' &&
+    !value.error && value.success !== false &&
+    (value.code === undefined || [0, '0', 200, '200'].includes(value.code))
+  if (success && Object.keys(root).every(key => ['total', 'list'].includes(key)) &&
+      (root.total === undefined || root.total === 0 || root.total === '0') &&
+      (root.list === undefined || root.list === null)) return []
   throw new Error('光鸭目录响应缺少已知列表字段，不能当作空目录处理')
 }
 

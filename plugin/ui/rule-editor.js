@@ -6,11 +6,12 @@ import { extensionTags } from './extension-tags.js'
 import { ruleExtensions, sourcePaths, VIDEO_EXTENSIONS, MUSIC_EXTENSIONS } from './shared/rules.js'
 import { nextTimes, beijingTime } from './shared/schedule.js'
 
-export function editRule(app, ctx, initial, onSave) {
+export function editRule(app, ctx, initial, onSave, defaultServiceURL = '') {
   const doc = app.ownerDocument, modal = dialog(app, initial ? '编辑规则' : '新增规则', true)
   const node = (tag, cls, text) => element(doc, tag, cls, text)
   const uuid = () => Array.from(doc.defaultView.crypto.getRandomValues(new Uint8Array(12)), n => n.toString(16).padStart(2, '0')).join('')
   const draft = { ...newRule(uuid()), ...initial, excluded_paths: [...(initial?.excluded_paths || [])] }
+  draft.service_url = draft.service_url || defaultServiceURL || doc.defaultView.location.origin
   if (draft.metadata_mode === 'local') draft.metadata_mode = 'off'
   modal.body.innerHTML = `
     <div class="form-section"><span>基本设置</span></div>
@@ -19,10 +20,11 @@ export function editRule(app, ctx, initial, onSave) {
     <div class="field"><label class="label">源路径 *</label><div><div class="pathbox"><input data-id="source" readonly aria-label="源路径"><button data-id="sourcePick" aria-label="选择源路径"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 7V5a2 2 0 0 1 2-2h5l2 3h7a2 2 0 0 1 2 2v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7Z"/></svg></button></div><div class="source-detail" data-id="sourceDetail"></div></div></div>
     <div class="field"><label class="label">输出路径 *</label><div><div class="pathbox"><input data-field="output_path" aria-label="输出路径" placeholder="例如 /media/strm/光鸭电影"><button data-id="outputPick" aria-label="选择本地输出路径"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 7V5a2 2 0 0 1 2-2h5l2 3h7a2 2 0 0 1 2 2v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7Z"/></svg></button></div><p class="help">本地输出目录，不同规则使用独立子目录。</p></div></div>
     <div class="field"><label class="label">生成模式</label><div><select data-field="link_mode" aria-label="生成模式"><option value="path">CD2路径模式（默认）</option><option value="link">链接模式（无需CD2）</option></select><p class="help" data-id="generationHelp"></p></div></div>
+    <div class="field" data-id="serviceAddress"><label class="label" for="gy-service-url">服务地址</label><div><input id="gy-service-url" data-field="service_url" type="url" aria-label="服务地址" placeholder="请填写 dian115 的内网地址"><p class="help">填写 Emby 可访问的 DIAN-115 地址，例如 http://192.168.10.5:8095。</p></div></div>
     <div class="form-section"><span>同步策略</span></div>
     <div class="field"><span class="label">启用</span><label class="switch"><input type="checkbox" data-field="enabled"><span>启用此规则</span></label></div>
     <div class="field"><span class="label">生成 STRM</span><div><label class="switch"><input type="checkbox" data-field="generate_strm"><span>生成本地 STRM 文件</span></label><p class="help">关闭后仅扫描并更新目录统计。</p></div></div>
-    <div class="field"><span class="label">同步模式</span><div><div class="sync-options"><label class="sync-option"><input type="checkbox" data-field="schedule_enabled"><span>定时同步</span></label><label class="sync-option"><input type="checkbox" data-field="organize_enabled"><span>实时监控</span></label></div><p class="help">不勾选任何选项为手动模式</p><div class="monitor-hint" data-id="monitorNotice"><span class="hint-icon" aria-hidden="true">i</span><span>每分钟检测整理结果，合并后自动增量同步。<br><small>当前采用整理记录检测，非网盘事件监听。</small></span></div></div></div>
+    <div class="field"><span class="label">同步模式</span><div><div class="sync-options"><label class="sync-option"><input type="checkbox" data-field="schedule_enabled"><span>定时同步</span></label><label class="sync-option"><input type="checkbox" data-field="organize_enabled"><span>实时监控</span></label></div><p class="help">不勾选任何选项为手动模式</p><div class="monitor-hint" data-id="monitorNotice"><span class="hint-icon" aria-hidden="true">i</span><span>整理成功事件优先触发增量；同时自动监听 CD2 光鸭源目录变化。<br><small>CD2 每 60 秒检查，宿主最多递归 500 个目录；首次建立监听会补一次同步。未挂载 CD2 时保留整理事件和定时同步。</small></span></div></div></div>
     <div class="field"><label class="label">增量同步频率</label><div><select data-field="incremental_minutes" aria-label="增量同步频率"></select><p class="help" data-id="legacyNotice" hidden>沿用旧版增量 cron，修改频率后使用当前预设。</p></div></div>
     <div class="field"><label class="label">全量同步频率</label><select data-field="full_minutes" aria-label="全量同步频率"></select></div>
     <div class="form-section"><span>文件与元数据</span></div>
@@ -56,6 +58,7 @@ export function editRule(app, ctx, initial, onSave) {
     $('legacyNotice').hidden = !value.legacy_cron
     fields.incremental_minutes.disabled = !value.schedule_enabled
     fields.full_minutes.disabled = !value.schedule_enabled
+    $('serviceAddress').hidden = value.link_mode !== 'link'
     $('generationHelp').textContent = value.link_mode === 'path' ? '使用完整 CD2 挂载路径生成 STRM。' : '通过插件获取播放直链，无需 CD2。'
     if (!value.enabled) { $('next').textContent = '规则已禁用，不会自动同步。'; return }
     try {
@@ -104,6 +107,12 @@ export function editRule(app, ctx, initial, onSave) {
     save.disabled = true; cancel.disabled = true; modal.lock(true); error.textContent = ''
     try {
       if (fields.link_mode.value === 'path' && !fields.cloud_name.value) throw new Error('未读取到 CD2 光鸭挂载名称，请稍后重开窗口或选择链接模式')
+      if (fields.link_mode.value === 'link') {
+        let url
+        try { url = new URL(fields.service_url.value.trim()) } catch { throw new Error('请输入有效的 DIAN-115 服务地址') }
+        if (!['http:', 'https:'].includes(url.protocol) || url.username || url.password || url.search || url.hash) throw new Error('服务地址须为 HTTP 或 HTTPS 地址，不能包含账号、密码、查询参数或锚点')
+        fields.service_url.value = url.href.replace(/\/+$/, '')
+      }
       const value = validateRule(getDraft()); await onSave(value); modal.close(true)
     }
     catch (failure) { error.textContent = failure.message || '保存失败'; save.disabled = false; cancel.disabled = false; modal.lock(false) }

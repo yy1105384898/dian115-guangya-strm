@@ -3,3 +3,8 @@ node_modules/
 .env
 *.log
 .DS_Store
+
+# Local rollback material, downloaded references and UI captures
+backups/
+reference/
+/cleaner-*.png

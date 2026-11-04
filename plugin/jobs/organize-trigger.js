@@ -9,26 +9,28 @@ function timestamp(value) {
 }
 const within = (path, root) => path === root || path.startsWith(root.replace(/\/+$/, '') + '/')
 
-// The public host contract exposes successful organize history with target_path.
-// Polling this contract avoids guessing undocumented host event names/payloads.
+// Host events wake this dispatcher; successful history remains the authority for
+// target paths so unrelated 115/local work cannot trigger a Guangya rule.
 export async function organizeRequests(ctx, rules) {
-  const now = Date.now(), old = await ctx.storage.get(STATE)
-  if (!old) {
-    await ctx.storage.set(STATE,{since:now,seen:[],pending:{}})
-    return {requests:[],state:{since:now,seen:[],pending:{}}}
-  }
-  const state = {...old, pending:{...(old.pending || {})}}, seen = new Set(old.seen || [])
+  const now = Date.now(), old = await ctx.storage.get(STATE) || { since: now - 120000, seen: [], pending: {}, settle: {} }
+  const state = {...old, pending:{...(old.pending || {})}, settle:{...(old.settle || {})}}, seen = new Set(old.seen || [])
+  const wakeup = Number(await ctx.storage.get('organize_event_wakeup')) || 0
+  const lastScan = Number(old.last_scan_at) || 0
+  const scanDue = !lastScan || now - lastScan >= 60000 || wakeup > lastScan && now - lastScan >= 3000
   const eligible = []
   for (const rule of rules.filter(item => item.enabled && item.organize_enabled !== false)) {
     try {
-      const resolved = await mountedRule(ctx,rule), root = sourcePaths(resolved).cd2
+      let resolved
+      try { resolved = await mountedRule(ctx, rule) }
+      catch (error) { if (!rule.cloud_name) throw error; resolved = rule }
+      const root = sourcePaths(resolved).cd2
       eligible.push({rule,root,host:cd2HostPath(root)})
     } catch (error) {
       // Do not match relative paths to unrelated 115 or local organize history.
       await ctx.task.log(rule.name + '：整理触发暂不可用，' + error.message)
     }
   }
-  if (eligible.length) {
+  if (eligible.length && scanDue) {
     // Re-read an overlap window to catch completion of an older record.
     // No checkpoint is advanced if pagination fails or exceeds the safety cap.
     const found = [], pageSize = 100
@@ -46,24 +48,29 @@ export async function organizeRequests(ctx, rules) {
       if (!at || at < old.since) continue
       const signature = ctx.crypto.sha256(JSON.stringify([record.id,record.completed_at,record.target_path]))
       if (seen.has(signature)) continue
-      // Wait one minute for sidecar writes; subsequent completions are merged by rule.
       for (const {rule,root,host} of eligible) {
         if (!within(record.target_path,root) && !within(record.target_path,host)) continue
         const excluded = (rule.excluded_paths || []).some(path => within(record.target_path,root + '/' + path) || within(record.target_path,host + '/' + path))
         if (excluded) continue
-        state.pending[rule.id] = {version:ctx.crypto.randomUUID(),ready:state.pending[rule.id]?.ready || now + 60000}
+        // STRM does not need to wait for the entire organize task or sidecars.
+        state.pending[rule.id] = {version:ctx.crypto.randomUUID(),ready:now}
+        // A quiet-period pass also picks up NFO/images written after the success receipt.
+        if (rule.metadata_mode !== 'off') state.settle[rule.id] = {version:ctx.crypto.randomUUID(),ready:now + 60000}
       }
       seen.add(signature)
     }
+    state.last_scan_at = now
   }
   state.seen = [...seen].slice(-10000)
   state.since = Math.max(old.since,now - 24*60*60*1000)
   const requests = []
-  for (const [id,pending] of Object.entries(state.pending)) {
-    const rule = rules.find(item => item.id === id)
-    const done = await ctx.storage.get('organize_done:' + id)
-    if (!rule || !rule.enabled || rule.organize_enabled === false || done === pending.version) { delete state.pending[id]; continue }
-    if (pending.ready <= now) requests.push({rule_id:id,full:false,organize_version:pending.version})
+  for (const slot of ['pending','settle']) {
+    for (const [id,pending] of Object.entries(state[slot])) {
+      const rule = rules.find(item => item.id === id)
+      const done = await ctx.storage.get('organize_done:' + id)
+      if (!rule || !rule.enabled || rule.organize_enabled === false || done === pending.version) { delete state[slot][id]; continue }
+      if (pending.ready <= now && !requests.some(request => request.rule_id === id)) requests.push({rule_id:id,full:false,organize_version:pending.version})
+    }
   }
   await ctx.storage.set(STATE,state)
   return {requests,state}

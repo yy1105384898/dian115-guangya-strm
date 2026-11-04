@@ -14,6 +14,7 @@ export async function handle(ctx, req) {
   }
   if (req.path === '/browse' && req.method === 'POST') {
     if (req.source !== 'hook') return { status: 403, body: '请登录 DIAN-115 后浏览目录' }
+    try {
     const settings = await loadSettings(ctx)
     if (!settings.access_token) return { status: 400, json: { error: '请先在“光鸭账号”登录，或导入手动凭证' } }
     const stored = await ctx.storage.get('tokens')
@@ -29,6 +30,15 @@ export async function handle(ctx, req) {
       entries = await listDirectory(ctx, settings, token, parentId)
     }
     return { json: { items: entries.filter(isDirectory).map(item => ({ id: itemId(item), name: itemName(item) })) } }
+    } catch (error) {
+      // Return a business error so clients that discard non-2xx response bodies
+      // can still show the actual directory failure instead of just HTTP 500.
+      const detail = String(error?.message || '未知后端异常')
+        .replace(/Bearer\s+\S+/gi, 'Bearer [隐藏]')
+        .replace(/https?:\/\/[^\s]+/gi, '[远程地址]')
+        .slice(0, 1200)
+      return { json: { error: '读取光鸭目录失败：' + detail }, headers: { 'Cache-Control': 'no-store' } }
+    }
   }
   if (req.path !== '/play' || req.method !== 'GET') return { status: 404, body: 'not found' }
   const settings = await loadSettings(ctx)

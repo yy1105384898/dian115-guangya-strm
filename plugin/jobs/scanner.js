@@ -7,7 +7,7 @@ export async function listDirectory(ctx, settings, token, parentId) {
   const pages = new Set()
   for (let page = 0; page < 10000; page++) {
     const response = await request(ctx, settings, token, LIST_URL, {
-      parentId: parentId || '', page, pageSize, orderBy: 0, sortType: 0, fileTypes: []
+      parentId: parentId || '', page, pageSize, orderBy: 0, sortType: 0
     })
     const items = findArray(response)
     if (!items.length) return all
@@ -17,6 +17,7 @@ export async function listDirectory(ctx, settings, token, parentId) {
     all.push(...items)
     const total = Number(response?.data?.total)
     if (Number.isFinite(total) && total > 0 && all.length >= total) return all
+    if (!(total > 0) && items.length < pageSize) return all
   }
   throw new Error('光鸭单目录分页超过上限，同步已停止')
 }
