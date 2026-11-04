@@ -2,7 +2,7 @@
   "schema_version": 3,
   "id": "community.guangya-strm",
   "name": "光鸭 STRM 同步",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "author": "yy1105384898",
   "description": "单账号登录、整理目录增量同步、Emby 刷新与入库查询、元数据下载及文件清理。",
   "requires": {

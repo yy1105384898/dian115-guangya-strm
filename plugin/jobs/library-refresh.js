@@ -74,7 +74,7 @@ export async function run(ctx) {
         } else {
           let found = null
           if (target.episode) {
-            const result = await ctx.api.get('/api/plugin-host/emby/episodes?tmdb_id=' + target.tmdb + '&season=' + Number(target.episode[1]) + '&total_episodes=0')
+            const result = await ctx.api.get('/api/plugin-host/emby/episodes?tmdb_id=' + target.tmdb + '&season=' + Number(target.episode[1]) )
             if (String(result?.tmdb_id) !== target.tmdb || Number(result?.season) !== Number(target.episode[1]) || typeof result?.covered_episodes !== 'string') throw new Error('宿主未返回有效的季集覆盖信息')
             const wanted = Number(target.episode[2])
             if (result.covered_episodes.split(',').some(part => {
